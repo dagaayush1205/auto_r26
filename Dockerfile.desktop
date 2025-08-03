@@ -1,73 +1,35 @@
 FROM ubuntu:22.04
 ENV DEBIAN_FRONTEND noninteractive
 
-# install dependencies via apt
-ENV DEBCONF_NOWARNINGS yes
-RUN apt-get update && apt-get install -y libglfw3-dev
-RUN set -x && \
-  apt-get update -y -qq && \
-  apt-get upgrade -y -qq --no-install-recommends && \
-  : "basic dependencies" && \
-  apt-get install -y  \
+#################################
+#   Librealsense Builder Stage  #
+#################################
+ARG BASE_IMAGE=ubuntu:22.04
+FROM ubuntu:22.04 as librealsense-builder 
+RUN apt-get update \
+    && apt-get install -qq -y --no-install-recommends \
     build-essential \
-    pkg-config \
     cmake \
     git \
-    wget \
-    curl \
-    tar \
-    unzip && \
-  : "g2o dependencies" && \
-  apt-get install -y -qq \
-    libatlas-base-dev \
-    libsuitesparse-dev \
-    libglew-dev && \
-  : "OpenCV dependencies" && \
-  apt-get install -y  \
-    libgtk-3-dev \
-    libjpeg-dev \
-    libpng++-dev \
-    libtiff-dev \
-    libopenexr-dev \
-    libwebp-dev \
-    ffmpeg \
-    libavcodec-dev \
-    libavformat-dev \
-    libavutil-dev \
-    libswscale-dev \
-    libtbb-dev && \
-  : "realsense dependencies" && \
-  apt-get install -qq -y --no-install-recommends \
-    curl \
     libssl-dev \
     libusb-1.0-0-dev \
     pkg-config \
     libgtk-3-dev \
+    libglfw3-dev \
     libgl1-mesa-dev \
-    libglu1-mesa-dev \    
+    libglu1-mesa-dev \
+    curl \
     python3 \
     python3-dev \
-    ca-certificates && \
-  : "backward-cpp dependencies" && \
-  apt install -y -qq binutils-dev && \
-  : "other dependencies" && \
-  apt-get install -y -qq \
-    libyaml-cpp-dev \
-    sqlite3 \
-    libsqlite3-dev && \
-  : "remove cache" && \
-  apt-get autoremove -y -qq && \
-  rm -rf /var/lib/apt/lists/*
-
-#################################
-#   Librealsense Builder Stage  #
-#################################
-
-FROM ubuntu:22.04 as librealsense-builder 
-
-ARG LIBRS_VERSION
+    ca-certificates \
+    libgl1-mesa-glx \
+    libglu1-mesa \
+    freeglut3-dev \
+    cmake-data \
+    libgl-dev \
+    && rm -rf /var/lib/apt/lists/*
+ARG LIBRS_VERSION=2.56.4
 RUN test -n "2.56.4"
-RUN apt-get install -qq -y curl
 # Download sources
 WORKDIR /usr/src
 RUN curl https://codeload.github.com/IntelRealSense/librealsense/tar.gz/refs/tags/v$LIBRS_VERSION -o librealsense.tar.gz 
@@ -75,6 +37,8 @@ RUN tar -zxf librealsense.tar.gz \
     && rm librealsense.tar.gz 
 RUN ln -s /usr/src/librealsense-$LIBRS_VERSION /usr/src/librealsense
 
+RUN rm -rf build
+ENV CMAKE_PREFIX_PATH=/usr/lib/x86_64-linux-gnu/cmake
 # Build and install
 RUN cd /usr/src/librealsense \
     && mkdir build && cd build \
@@ -83,16 +47,17 @@ RUN cd /usr/src/librealsense \
     -DCMAKE_CXX_FLAGS_RELEASE="${CMAKE_CXX_FLAGS_RELEASE} -s" \
     -DCMAKE_INSTALL_PREFIX=/opt/librealsense \    
     -DBUILD_GRAPHICAL_EXAMPLES=OFF \
+    -DBUILD_EXAMPLES=OFF \
     -DBUILD_PYTHON_BINDINGS:bool=true \
     -DCMAKE_BUILD_TYPE=Release ../ \
-    && make -j$(($(nproc)-1)) all \
+    && make -j$(($(nproc)-1)) \
     && make install 
 
 
 ######################################
 #   librealsense Base Image Stage    #
 ######################################
-FROM ${BASE_IMAGE} as librealsense
+FROM ubuntu:22.04 as librealsense
 
 # Copy binaries from builder stage
 COPY --from=librealsense-builder /opt/librealsense /usr/local/
@@ -128,8 +93,67 @@ ENV LD_LIBRARY_PATH=${CMAKE_INSTALL_PREFIX}/lib:${LD_LIBRARY_PATH}
 
 ENV NVIDIA_VISIBLE_DEVICES ${NVIDIA_VISIBLE_DEVICES:-all}
 ENV NVIDIA_DRIVER_CAPABILITIES ${NVIDIA_DRIVER_CAPABILITIES:+$NVIDIA_DRIVER_CAPABILITIES,}graphics
+# install dependencies via apt
+ENV DEBCONF_NOWARNINGS yes
+RUN apt-get update && apt-get install -y libglfw3-dev
+RUN set -x && \
+  apt-get update -y -qq && \
+  apt-get upgrade -y -qq --no-install-recommends && \
+  : "basic dependencies" && \
+  apt-get install -y  \
+    build-essential \
+    pkg-config \
+    cmake \
+    git \
+    wget \
+    curl \
+    tar \
+    unzip && \
+  : "g2o dependencies" && \
+  apt-get install -y -qq \
+    libatlas-base-dev \
+    libsuitesparse-dev \
+    libglew-dev && \
+  : "OpenCV dependencies" && \
+  apt-get install -y  \
+    libgtk-3-dev \
+    libjpeg-dev \
+    libpng++-dev \
+    libtiff-dev \
+    libopenexr-dev \
+    libwebp-dev \
+    ffmpeg \
+    libavcodec-dev \
+    libavformat-dev \
+    libavutil-dev \
+    libswscale-dev \
+    libtbb-dev && \
+  # : "realsense dependencies" && \
+  # apt-get install -qq -y --no-install-recommends \
+  #   curl \
+  #   libssl-dev \
+  #   libusb-1.0-0-dev \
+  #   pkg-config \
+  #   libgtk-3-dev \
+  #   libgl1-mesa-dev \
+  #   libglu1-mesa-dev \    
+  #   python3 \
+  #   python3-dev \
+  #   ca-certificates && \
+  : "backward-cpp dependencies" && \
+  apt install -y -qq binutils-dev && \
+  : "other dependencies" && \
+  apt-get install -y -qq \
+    libyaml-cpp-dev \
+    sqlite3 \
+    libsqlite3-dev && \
+  : "remove cache" && \
+  apt-get autoremove -y -qq && \
+  rm -rf /var/lib/apt/lists/*
+
 
 # Eigen
+RUN apt-get install wget
 ARG EIGEN3_VERSION=3.3.7
 WORKDIR /tmp
 RUN set -x && \
